@@ -1,13 +1,12 @@
+import 'package:chat_app/shared/style/contstants.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:google_maps_flutter_platform_interface/src/types/location.dart';
-import 'package:provider/provider.dart';
-import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:chat_app/screens/auth/register_screen.dart';
 import 'package:chat_app/screens/chat/chat_list.dart';
 import 'package:chat_app/shared/auth_service.dart';
-import 'package:chat_app/shared/style/contstants.dart';
 import 'package:chat_app/shared/widgets/app_bar.dart';
 
 class AuthScreen extends StatefulWidget {
@@ -21,7 +20,7 @@ class AuthScreen extends StatefulWidget {
   final String? u_id;
 
   const AuthScreen({
-    super.key,
+    Key? key,
     this.startdatetime,
     this.enddatetime,
     this.cpsId,
@@ -30,7 +29,7 @@ class AuthScreen extends StatefulWidget {
     this.image,
     this.postcode,
     this.u_id,
-  });
+  }) : super(key: key);
 
   @override
   _AuthScreenState createState() => _AuthScreenState();
@@ -137,6 +136,13 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> _login({required String routePage}) async {
+    if (emailController.text.isEmpty || passwordController.text.isEmpty) {
+      setState(() {
+        _errorMessage = "Please enter email and password.";
+      });
+      return;
+    }
+
     try {
       UserCredential userCredential = await _auth.signInWithEmailAndPassword(
         email: emailController.text,
@@ -214,7 +220,7 @@ class _AuthScreenState extends State<AuthScreen> {
                                   : Icons.visibility,
                               color: _obscureText
                                   ? Colors.grey
-                                  : Constants().primaryColor,
+                                  : AppColors.primaryColor,
                             ),
                             onPressed: () {
                               setState(() {
@@ -228,20 +234,17 @@ class _AuthScreenState extends State<AuthScreen> {
                   SizedBox(height: 20),
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Constants().primaryColor,
+                      backgroundColor: AppColors.primaryColor,
                     ),
                     onPressed: () {
-                      if (emailController.text.length > 6 &&
-                          passwordController.text.length > 6) {
-                        _login(routePage: widget.routePage!);
+                      if (emailController.text.isNotEmpty &&
+                          passwordController.text.isNotEmpty) {
+                        _login(routePage: widget.routePage ?? 'chat_list');
                       } else {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              "Email and password must be at least 6 characters long.",
-                            ),
-                          ),
-                        );
+                        setState(() {
+                          _errorMessage =
+                              "Email and password must be at least 6 characters long.";
+                        });
                       }
                     },
                     child: Text('Login'),
@@ -261,7 +264,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     child: Text(
                       'Register',
                       style: TextStyle(
-                        color: Constants().primaryColor,
+                        color: AppColors.primaryColor,
                       ),
                     ),
                   ),
@@ -296,8 +299,9 @@ class _AuthScreenState extends State<AuthScreen> {
                       } else {
                         if (widget.u_id != null) {
                           await signInFunc(context, widget.u_id!);
+                        } else {
+                          await signInFunc(context);
                         }
-                        await signInFunc(context);
                       }
                     },
                     style: ElevatedButton.styleFrom(

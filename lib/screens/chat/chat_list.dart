@@ -1,8 +1,10 @@
-import 'package:chat_app/screens/auth/auth_screen.dart';
-import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:chat_app/screens/chat/chat_page.dart';
+import 'package:chat_app/shared/auth_service.dart';
 import 'package:chat_app/shared/widgets/app_bar.dart';
 
 class ChatList extends StatefulWidget {
@@ -11,166 +13,122 @@ class ChatList extends StatefulWidget {
 }
 
 class _ChatListState extends State<ChatList> {
-  User? currentUser;
-  TextEditingController searchController = TextEditingController();
-  List<DocumentSnapshot> searchResults = [];
+  late User? currentUser;
+  bool isLoading = false;
+  String searchQuery = "";
 
   @override
   void initState() {
     super.initState();
     currentUser = FirebaseAuth.instance.currentUser;
-    if (currentUser == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => AuthScreen()),
-        );
-      });
-    }
-    print('Current user: $currentUser');
-  }
-
-  void searchUsers(String query) async {
-    if (query.isEmpty) {
-      setState(() {
-        searchResults = [];
-      });
-      return;
-    }
-
-    try {
-      final usersCollection = FirebaseFirestore.instance.collection('users');
-
-      final searchByName =
-          await usersCollection.where('name', isEqualTo: query).get();
-
-      final searchByEmail =
-          await usersCollection.where('email', isEqualTo: query).get();
-
-      setState(() {
-        searchResults = searchByName.docs + searchByEmail.docs;
-      });
-
-      print("Search results: ${searchResults.length}");
-    } catch (e) {
-      print("Error searching users: $e");
-    }
+    print("Current User: ${currentUser?.uid}");
   }
 
   @override
   Widget build(BuildContext context) {
+    final authService = Provider.of<AuthService>(context);
+    final isLoggedInStream = authService.user!.map((user) => user != null);
     return Scaffold(
       appBar: CustomAppBar(
-          title: 'Conversations', isLoggedInStream: Stream.value(true)),
+        title: 'Conversations',
+        isLoggedInStream: isLoggedInStream,
+      ),
       body: Column(
         children: [
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: TextField(
-              controller: searchController,
               decoration: InputDecoration(
-                labelText: 'Search by name or email',
-                suffixIcon: IconButton(
-                  icon: Icon(Icons.search),
-                  onPressed: () {
-                    searchUsers(searchController.text);
-                  },
-                ),
+                hintText: "Search by email or name",
+                prefixIcon: Icon(Icons.search),
               ),
+              onChanged: (value) {
+                setState(() {
+                  searchQuery = value;
+                });
+              },
             ),
           ),
           Expanded(
-            child: searchResults.isNotEmpty
-                ? ListView.builder(
-                    itemCount: searchResults.length,
-                    itemBuilder: (context, index) {
-                      var user = searchResults[index];
-                      return ListTile(
-                        leading: CircleAvatar(
-                          backgroundImage: NetworkImage(user['image'] ?? ''),
-                        ),
-                        title: Text(user['name'] ?? ''),
-                        subtitle: Text(user['email'] ?? ''),
-                        onTap: () {
-                          if (user.id.isNotEmpty && currentUser != null) {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => ChatPage(
-                                  u_id: user.id,
-                                  currentUserId: currentUser!.uid,
+            child: StreamBuilder(
+              stream: FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(currentUser?.uid)
+                  .collection('messages')
+                  .snapshots(),
+              builder: (context, AsyncSnapshot snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return Center(
+                    child: CircularProgressIndicator(),
+                  );
+                }
+                if (!snapshot.hasData || snapshot.data.docs.length == 0) {
+                  return Center(
+                    child: Text("No Chats Available!"),
+                  );
+                }
+                print("Chats Found: ${snapshot.data.docs.length}");
+                return ListView.builder(
+                  itemCount: snapshot.data.docs.length,
+                  itemBuilder: (context, index) {
+                    var friendId = snapshot.data.docs[index].id;
+                    var lastMsg = snapshot.data.docs[index]['last_msg'];
+                    print("Friend ID: $friendId, Last Message: $lastMsg");
+                    return FutureBuilder(
+                      future: FirebaseFirestore.instance
+                          .collection('users')
+                          .doc(friendId)
+                          .get(),
+                      builder: (context, AsyncSnapshot asyncSnapshot) {
+                        if (asyncSnapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return Container();
+                        }
+                        if (!asyncSnapshot.hasData ||
+                            !asyncSnapshot.data.exists) {
+                          return Container();
+                        }
+                        var friend = asyncSnapshot.data;
+                        if (searchQuery.isEmpty ||
+                            friend['email']
+                                .toLowerCase()
+                                .contains(searchQuery.toLowerCase()) ||
+                            friend['name']
+                                .toLowerCase()
+                                .contains(searchQuery.toLowerCase())) {
+                          return ListTile(
+                            leading: CircleAvatar(
+                              backgroundImage: CachedNetworkImageProvider(
+                                  friend['image'] ?? ''),
+                            ),
+                            title: Text(friend['name'] ?? 'Unknown User'),
+                            subtitle: Text(
+                              "$lastMsg",
+                              style: TextStyle(color: Colors.grey),
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            ),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => ChatPage(
+                                    u_id: friend.id,
+                                    currentUserId: currentUser!.uid,
+                                  ),
                                 ),
-                              ),
-                            );
-                          } else {
-                            print('Invalid user information');
-                          }
-                        },
-                      );
-                    },
-                  )
-                : StreamBuilder<QuerySnapshot>(
-                    stream: FirebaseFirestore.instance
-                        .collection('users')
-                        .doc(currentUser!.uid)
-                        .collection('messages')
-                        .snapshots(),
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return Center(child: CircularProgressIndicator());
-                      }
-
-                      if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                        return Center(child: Text("No conversations found"));
-                      }
-
-                      return ListView.builder(
-                        itemCount: snapshot.data!.docs.length,
-                        itemBuilder: (context, index) {
-                          var friendId = snapshot.data!.docs[index].id;
-                          var lastMsg = snapshot.data!.docs[index]['last_msg'];
-                          return FutureBuilder<DocumentSnapshot>(
-                            future: FirebaseFirestore.instance
-                                .collection('users')
-                                .doc(friendId)
-                                .get(),
-                            builder: (context, snapshot) {
-                              if (!snapshot.hasData) {
-                                return Center(
-                                    child: CircularProgressIndicator());
-                              }
-
-                              var friend = snapshot.data;
-                              return ListTile(
-                                leading: CircleAvatar(
-                                  backgroundImage:
-                                      NetworkImage(friend!['image'] ?? ''),
-                                ),
-                                title: Text(friend['name'] ?? ''),
-                                subtitle: Text(lastMsg ?? ''),
-                                onTap: () {
-                                  if (friend.id.isNotEmpty &&
-                                      currentUser != null) {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) => ChatPage(
-                                          u_id: friend.id,
-                                          currentUserId: currentUser!.uid,
-                                        ),
-                                      ),
-                                    );
-                                  } else {
-                                    print('Invalid user information');
-                                  }
-                                },
                               );
                             },
                           );
-                        },
-                      );
-                    },
-                  ),
+                        } else {
+                          return Container();
+                        }
+                      },
+                    );
+                  },
+                );
+              },
+            ),
           ),
         ],
       ),
