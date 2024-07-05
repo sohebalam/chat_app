@@ -1,11 +1,8 @@
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:chat_app/shared/style/contstants.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:chat_app/screens/chat/chat_page.dart';
-import 'package:chat_app/shared/auth_service.dart';
-import 'package:chat_app/shared/widgets/app_bar.dart';
 
 class ChatList extends StatefulWidget {
   @override
@@ -13,34 +10,51 @@ class ChatList extends StatefulWidget {
 }
 
 class _ChatListState extends State<ChatList> {
-  late User? currentUser;
-  bool isLoading = false;
-  String searchQuery = "";
+  User? currentUser;
+  TextEditingController searchController = TextEditingController();
+  String searchQuery = '';
 
   @override
   void initState() {
     super.initState();
     currentUser = FirebaseAuth.instance.currentUser;
-    print("Current User: ${currentUser?.uid}");
+    if (currentUser == null) {
+      Navigator.pushReplacementNamed(context, '/auth');
+    } else {
+      print('Current user ID: ${currentUser!.uid}');
+    }
+  }
+
+  Future<void> _signOut() async {
+    await FirebaseAuth.instance.signOut();
+    Navigator.pushReplacementNamed(context, '/auth');
   }
 
   @override
   Widget build(BuildContext context) {
-    final authService = Provider.of<AuthService>(context);
-    final isLoggedInStream = authService.user!.map((user) => user != null);
     return Scaffold(
-      appBar: CustomAppBar(
-        title: 'Conversations',
-        isLoggedInStream: isLoggedInStream,
+      appBar: AppBar(
+        title: Text('Chats'),
+        backgroundColor: AppColors.primaryColor,
+        actions: [
+          IconButton(
+            icon: Icon(Icons.logout),
+            onPressed: _signOut,
+          ),
+        ],
       ),
       body: Column(
         children: [
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: TextField(
+              controller: searchController,
               decoration: InputDecoration(
-                hintText: "Search by email or name",
+                hintText: 'Search users...',
                 prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8.0),
+                ),
               ),
               onChanged: (value) {
                 setState(() {
@@ -53,76 +67,98 @@ class _ChatListState extends State<ChatList> {
             child: StreamBuilder(
               stream: FirebaseFirestore.instance
                   .collection('users')
-                  .doc(currentUser?.uid)
+                  .doc(currentUser!.uid)
                   .collection('messages')
+                  .doc(currentUser!.uid)
+                  .collection('chats')
                   .snapshots(),
-              builder: (context, AsyncSnapshot snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return Center(
-                    child: CircularProgressIndicator(),
-                  );
+              builder: (context, AsyncSnapshot<QuerySnapshot> snapshot) {
+                if (!snapshot.hasData) {
+                  print('Snapshot has no data.');
+                  return Center(child: CircularProgressIndicator());
                 }
-                if (!snapshot.hasData || snapshot.data.docs.length == 0) {
-                  return Center(
-                    child: Text("No Chats Available!"),
-                  );
+
+                if (snapshot.data!.docs.isEmpty) {
+                  print('No chats available');
+                  return Center(child: Text('No chats available.'));
                 }
-                print("Chats Found: ${snapshot.data.docs.length}");
+
+                print("Fetched ${snapshot.data!.docs.length} chat(s)");
+
                 return ListView.builder(
-                  itemCount: snapshot.data.docs.length,
+                  itemCount: snapshot.data!.docs.length,
                   itemBuilder: (context, index) {
-                    var friendId = snapshot.data.docs[index].id;
-                    var lastMsg = snapshot.data.docs[index]['last_msg'];
-                    print("Friend ID: $friendId, Last Message: $lastMsg");
-                    return FutureBuilder(
+                    var chat = snapshot.data!.docs[index];
+                    var chatData = chat.data() as Map<String, dynamic>?;
+
+                    // Debugging: Print the entire chat document
+                    print('Chat document data: ${chatData}');
+
+                    if (chatData == null ||
+                        !chatData.containsKey('senderId') ||
+                        !chatData.containsKey('receiverId')) {
+                      print('Invalid chat data for chat with ID: ${chat.id}');
+                      return ListTile(
+                        title: Text('Invalid chat data'),
+                        subtitle: Text('Required fields are missing.'),
+                      );
+                    }
+
+                    var friendId = chatData['senderId'] == currentUser!.uid
+                        ? chatData['receiverId']
+                        : chatData['senderId'];
+
+                    return FutureBuilder<DocumentSnapshot>(
                       future: FirebaseFirestore.instance
                           .collection('users')
                           .doc(friendId)
                           .get(),
-                      builder: (context, AsyncSnapshot asyncSnapshot) {
-                        if (asyncSnapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return Container();
-                        }
-                        if (!asyncSnapshot.hasData ||
-                            !asyncSnapshot.data.exists) {
-                          return Container();
-                        }
-                        var friend = asyncSnapshot.data;
-                        if (searchQuery.isEmpty ||
-                            friend['email']
-                                .toLowerCase()
-                                .contains(searchQuery.toLowerCase()) ||
-                            friend['name']
-                                .toLowerCase()
-                                .contains(searchQuery.toLowerCase())) {
+                      builder: (context, friendSnapshot) {
+                        if (!friendSnapshot.hasData) {
                           return ListTile(
-                            leading: CircleAvatar(
-                              backgroundImage: CachedNetworkImageProvider(
-                                  friend['image'] ?? ''),
-                            ),
-                            title: Text(friend['name'] ?? 'Unknown User'),
-                            subtitle: Text(
-                              "$lastMsg",
-                              style: TextStyle(color: Colors.grey),
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 1,
-                            ),
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => ChatPage(
-                                    u_id: friend.id,
-                                    currentUserId: currentUser!.uid,
-                                  ),
-                                ),
-                              );
-                            },
+                            title: Text('Loading...'),
                           );
-                        } else {
-                          return Container();
                         }
+
+                        var friendData = friendSnapshot.data!.data()
+                            as Map<String, dynamic>?;
+                        if (friendData == null) {
+                          print('User not found for friend ID: $friendId');
+                          return ListTile(
+                            title: Text('User not found'),
+                          );
+                        }
+
+                        var friendName = friendData['name'] ?? 'Unknown';
+                        var friendImage = friendData['image'] ?? '';
+                        var lastMessage = chatData['message'] ?? '';
+
+                        print(
+                            "Chat with $friendName ($friendId): $lastMessage");
+
+                        return ListTile(
+                          leading: CircleAvatar(
+                            backgroundImage: friendImage.isNotEmpty
+                                ? NetworkImage(friendImage)
+                                : AssetImage('assets/person.png')
+                                    as ImageProvider,
+                          ),
+                          title: Text(friendName),
+                          subtitle: Text(lastMessage),
+                          onTap: () {
+                            print(
+                                'Navigating to chat with $friendName ($friendId)');
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => ChatPage(
+                                  u_id: friendId,
+                                  currentUserId: currentUser!.uid,
+                                ),
+                              ),
+                            );
+                          },
+                        );
                       },
                     );
                   },
